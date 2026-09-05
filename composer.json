@@ -1,0 +1,32 @@
+{
+  "name": "nfourteen/module-inventory-aggregate-product",
+  "type": "magento2-module",
+  "require": {
+    "php": ">=8.3",
+    "magento/framework": "*",
+    "magento/module-catalog": "104.0.*",
+    "magento/module-catalog-inventory": "100.4.*",
+    "magento/module-inventory-api": "1.2.*",
+    "magento/module-inventory-catalog-api": "1.3.*",
+    "magento/module-inventory-configuration-api": "1.2.*",
+    "magento/module-inventory-reservations-api": "1.2.*",
+    "magento/module-inventory-sales": "1.3.*",
+    "magento/module-inventory-sales-api": "1.2.*",
+    "magento/module-inventory-shipping": "1.2.*",
+    "magento/module-inventory-source-deduction-api": "1.2.*",
+    "magento/module-inventory-source-selection-api": "1.4.*",
+    "magento/module-sales-inventory": "100.4.*",
+    "nfourteen/module-aggregate-product": "*"
+  },
+  "license": [
+    "Proprietary"
+  ],
+  "autoload": {
+    "files": [
+      "registration.php"
+    ],
+    "psr-4": {
+      "Nfourteen\\InventoryAggregateProduct\\": ""
+    }
+  }
+}

@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<config xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:noNamespaceSchemaLocation="urn:magento:framework:Module/etc/module.xsd">
+    <module name="Nfourteen_InventoryAggregateProduct">
+        <sequence>
+            <module name="Magento_InventoryConfigurationApi"/>
+            <module name="Magento_InventorySales"/>
+            <module name="Magento_InventorySalesApi"/>
+            <module name="Magento_InventoryShipping"/>
+            <module name="Magento_InventoryCatalog"/>
+            <module name="Nfourteen_AggregateProduct"/>
+        </sequence>
+    </module>
+</config>

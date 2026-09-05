@@ -1,0 +1,61 @@
+<?xml version="1.0"?>
+<!--
+/**
+ * Copyright © Nfourteen. All Rights Reserved.
+ * See COPYING.txt for license details.
+ */
+-->
+<config xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="urn:magento:framework:ObjectManager/etc/config.xsd">
+    <!-- Register stock status processor for aggregate products -->
+    <type name="Magento\InventoryCatalogApi\Model\CompositeProductStockStatusProcessorPool">
+        <arguments>
+            <argument name="compositeProductStockStatusProcessors" xsi:type="array">
+                <item name="aggregate" xsi:type="object">Nfourteen\InventoryAggregateProduct\Service\StockStatusProcessor</item>
+            </argument>
+        </arguments>
+    </type>
+
+    <type name="Magento\InventorySalesApi\Model\GetIsQtySalableInterface">
+        <plugin name="inventory_aggregate_product_is_children_salable"
+                type="Nfourteen\InventoryAggregateProduct\Plugin\InventorySales\Model\IsProductSalableCondition\GetIsQtySalableForAggregateProduct"/>
+    </type>
+
+    <!-- Disable source item management for aggregate products -->
+    <type name="Magento\InventoryConfigurationApi\Model\IsSourceItemManagementAllowedForProductTypeInterface">
+        <plugin name="disable_aggregate_type" type="Nfourteen\InventoryAggregateProduct\Plugin\InventoryConfigurationApi\IsSourceItemManagementAllowedForProductType\DisableAggregateTypePlugin"/>
+    </type>
+
+    <!-- Shipment: replace aggregate parent SKU deductions with child SKU deductions -->
+    <type name="Magento\InventoryShipping\Model\GetItemsToDeductFromShipment">
+        <plugin name="aggregate_shipment_deduction"
+                type="Nfourteen\InventoryAggregateProduct\Plugin\InventoryShipping\GetItemsToDeductFromShipmentPlugin"/>
+    </type>
+
+    <!-- Invoice: expand aggregate parent to virtual child SKUs for source selection -->
+    <type name="Magento\InventoryShipping\Model\GetSourceSelectionResultFromInvoice">
+        <plugin name="aggregate_invoice_deduction"
+                type="Nfourteen\InventoryAggregateProduct\Plugin\InventoryShipping\GetSourceSelectionResultFromInvoicePlugin"/>
+    </type>
+
+    <!-- Cancellation: replace aggregate parent SKU compensation with child SKU compensation -->
+    <type name="Magento\InventorySales\Model\GetItemsToCancelFromOrderItem">
+        <plugin name="aggregate_cancellation_compensation"
+                type="Nfourteen\InventoryAggregateProduct\Plugin\InventorySales\GetItemsToCancelFromOrderItemPlugin"/>
+    </type>
+
+    <!--
+        Credit-memo return-to-stock: core's MSI plugin ignores aggregate parents (source item
+        management is disabled for the type) and the children are hidden order items, so nothing
+        is restored. Core's own plugin is an aroundExecute that fully replaces the method and never
+        calls $proceed, so a plain afterExecute here would be stranded behind it. We therefore wrap
+        core as the OUTERMOST around plugin (sortOrder lower than core's default 0): we strip the
+        hidden aggregate children from the list core sees, call $proceed to let core handle ordinary
+        items, then expand each returned parent into its child SKUs through the same ProcessRefundItems
+        path core uses.
+    -->
+    <type name="Magento\SalesInventory\Model\Order\ReturnProcessor">
+        <plugin name="aggregate_refund_return_to_stock" sortOrder="-1"
+                type="Nfourteen\InventoryAggregateProduct\Plugin\InventorySales\ProcessRefundItemsForAggregatePlugin"/>
+    </type>
+
+</config>
