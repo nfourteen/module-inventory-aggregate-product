@@ -190,6 +190,239 @@ class AggregateRefundReturnToStockTest extends TestCase
         $this->assertEquals(100.0, $this->getDefaultSalableQty('agg-auto-child2'), 'child2 salable qty restored');
     }
 
+    /**
+     * A simple sold both standalone and as an aggregate child puts the same SKU in front of two
+     * separate ProcessRefundItems calls: core's (for the standalone line) and the plugin's (for
+     * the aggregate child). Each call recomputes the order-wide deducted qty from scratch, so with
+     * only part of the SKU shipped both calls independently classify their qty as a source restore
+     * and the source is credited more than was ever taken from it.
+     */
+    #[
+        DbIsolation(false),
+        AppIsolation(true),
+        Config('carriers/flatrate/active', 1, 'store', 'default'),
+        Config('payment/checkmo/active', 1, 'store', 'default'),
+        DataFixture(ProductFixture::class, ['sku' => 'agg-mix-shared', 'price' => 5.0], as: 'shared'),
+        DataFixture(AggregateProductFixture::class, ['sku' => 'agg-mix-parent', 'price' => 10.0, '_children' => [
+            ['product_id' => '$shared.id$', 'qty' => 2],
+        ]], as: 'aggregate'),
+        DataFixture(SourceItemFixture::class, ['sku' => '$shared.sku$', 'source_code' => 'default', 'quantity' => 100, 'status' => 1]),
+        DataFixture(GuestCartFixture::class, as: 'cart'),
+        DataFixture(AddProductToCartFixture::class, ['cart_id' => '$cart.id$', 'product_id' => '$aggregate.id$', 'qty' => 1]),
+        DataFixture(AddProductToCartFixture::class, ['cart_id' => '$cart.id$', 'product_id' => '$shared.id$', 'qty' => 1]),
+        DataFixture(SetBillingAddressFixture::class, ['cart_id' => '$cart.id$']),
+        DataFixture(SetShippingAddressFixture::class, ['cart_id' => '$cart.id$']),
+        DataFixture(SetGuestEmailFixture::class, ['cart_id' => '$cart.id$']),
+        DataFixture(SetDeliveryMethodFixture::class, ['cart_id' => '$cart.id$', 'carrier_code' => 'flatrate', 'method_code' => 'flatrate']),
+        DataFixture(SetPaymentMethodFixture::class, ['cart_id' => '$cart.id$', 'method' => 'checkmo']),
+        DataFixture(PlaceOrderFixture::class, ['cart_id' => '$cart.id$'], as: 'order'),
+    ]
+    public function testSharedChildSkuIsNotRestoredToSourceTwice(): void
+    {
+        $orderId = (int) $this->fixtures->get('order')->getEntityId();
+        $this->invoiceOrder->execute($orderId);
+
+        /** @var Order $order */
+        $order = $this->orderRepository->get($orderId);
+        $parentItem = $this->getAggregateParentItem($order);
+        $standaloneItem = $this->getStandaloneItem($order, 'agg-mix-shared');
+        $this->assertNotNull($parentItem, 'Aggregate parent item should exist in order');
+        $this->assertNotNull($standaloneItem, 'Standalone item should exist in order');
+
+        // Ship the aggregate only. The standalone line stays invoiced-but-unshipped, so exactly 2
+        // of the 3 ordered units of the shared SKU are ever taken out of the source.
+        $this->shipOrder->execute(
+            $orderId,
+            $this->createShippableItemsExcluding($order, (int) $standaloneItem->getItemId())
+        );
+
+        $this->assertEquals(
+            98.0,
+            $this->getDefaultSourceQty('agg-mix-shared'),
+            'only the aggregate ships, so the source gives up 2 units and no more'
+        );
+
+        /** @var Order $order */
+        $order = $this->orderRepository->get($orderId);
+        $creditmemo = $this->creditmemoFactory->createByOrder($order, [
+            'qtys' => [
+                (int) $parentItem->getItemId() => 1,
+                (int) $standaloneItem->getItemId() => 1,
+            ],
+        ]);
+        $this->setBackToStockLikeAdmin($creditmemo, [
+            (int) $parentItem->getItemId(),
+            (int) $standaloneItem->getItemId(),
+        ]);
+
+        $this->objectManager->get(CreditmemoManagementInterface::class)->refund($creditmemo, true);
+
+        // 2 units left the source, so at most 2 may come back; the unshipped standalone unit is
+        // owed a reservation release, not a source credit.
+        $this->assertEquals(
+            100.0,
+            $this->getDefaultSourceQty('agg-mix-shared'),
+            'source restored to the physical on-hand qty, not credited for the unshipped unit'
+        );
+        $this->assertEquals(
+            100.0,
+            $this->getDefaultSalableQty('agg-mix-shared'),
+            'salable qty restored with no reservation left outstanding'
+        );
+    }
+
+    /**
+     * Control for testSharedChildSkuIsNotRestoredToSourceTwice: identical order and shipment, but
+     * only the standalone line is refunded, so the plugin's expansion never fires and core's call
+     * runs alone. Isolates how much of the over-credit each call contributes.
+     */
+    #[
+        DbIsolation(false),
+        AppIsolation(true),
+        Config('carriers/flatrate/active', 1, 'store', 'default'),
+        Config('payment/checkmo/active', 1, 'store', 'default'),
+        DataFixture(ProductFixture::class, ['sku' => 'agg-ctl-shared', 'price' => 5.0], as: 'shared'),
+        DataFixture(AggregateProductFixture::class, ['sku' => 'agg-ctl-parent', 'price' => 10.0, '_children' => [
+            ['product_id' => '$shared.id$', 'qty' => 2],
+        ]], as: 'aggregate'),
+        DataFixture(SourceItemFixture::class, ['sku' => '$shared.sku$', 'source_code' => 'default', 'quantity' => 100, 'status' => 1]),
+        DataFixture(GuestCartFixture::class, as: 'cart'),
+        DataFixture(AddProductToCartFixture::class, ['cart_id' => '$cart.id$', 'product_id' => '$aggregate.id$', 'qty' => 1]),
+        DataFixture(AddProductToCartFixture::class, ['cart_id' => '$cart.id$', 'product_id' => '$shared.id$', 'qty' => 1]),
+        DataFixture(SetBillingAddressFixture::class, ['cart_id' => '$cart.id$']),
+        DataFixture(SetShippingAddressFixture::class, ['cart_id' => '$cart.id$']),
+        DataFixture(SetGuestEmailFixture::class, ['cart_id' => '$cart.id$']),
+        DataFixture(SetDeliveryMethodFixture::class, ['cart_id' => '$cart.id$', 'carrier_code' => 'flatrate', 'method_code' => 'flatrate']),
+        DataFixture(SetPaymentMethodFixture::class, ['cart_id' => '$cart.id$', 'method' => 'checkmo']),
+        DataFixture(PlaceOrderFixture::class, ['cart_id' => '$cart.id$'], as: 'order'),
+    ]
+    public function testControlStandaloneOnlyRefundLeavesSourceUntouched(): void
+    {
+        $orderId = (int) $this->fixtures->get('order')->getEntityId();
+        $this->invoiceOrder->execute($orderId);
+
+        /** @var Order $order */
+        $order = $this->orderRepository->get($orderId);
+        $standaloneItem = $this->getStandaloneItem($order, 'agg-ctl-shared');
+
+        $this->shipOrder->execute(
+            $orderId,
+            $this->createShippableItemsExcluding($order, (int) $standaloneItem->getItemId())
+        );
+        $this->assertEquals(98.0, $this->getDefaultSourceQty('agg-ctl-shared'), 'aggregate ships 2');
+
+        /** @var Order $order */
+        $order = $this->orderRepository->get($orderId);
+        $creditmemo = $this->creditmemoFactory->createByOrder($order, [
+            'qtys' => [(int) $standaloneItem->getItemId() => 1],
+        ]);
+        $this->setBackToStockLikeAdmin($creditmemo, [(int) $standaloneItem->getItemId()]);
+
+        $this->objectManager->get(CreditmemoManagementInterface::class)->refund($creditmemo, true);
+
+        // The refunded unit never shipped, so it is owed a reservation release and nothing else.
+        $this->assertEquals(
+            98.0,
+            $this->getDefaultSourceQty('agg-ctl-shared'),
+            'unshipped refund must not credit the source'
+        );
+    }
+
+    /**
+     * Same shared-SKU order as testSharedChildSkuIsNotRestoredToSourceTwice, but everything ships
+     * before the refund. Pins down whether the over-credit follows the split refund call or only
+     * the partially-shipped shape.
+     */
+    #[
+        DbIsolation(false),
+        AppIsolation(true),
+        Config('carriers/flatrate/active', 1, 'store', 'default'),
+        Config('payment/checkmo/active', 1, 'store', 'default'),
+        DataFixture(ProductFixture::class, ['sku' => 'agg-full-shared', 'price' => 5.0], as: 'shared'),
+        DataFixture(AggregateProductFixture::class, ['sku' => 'agg-full-parent', 'price' => 10.0, '_children' => [
+            ['product_id' => '$shared.id$', 'qty' => 2],
+        ]], as: 'aggregate'),
+        DataFixture(SourceItemFixture::class, ['sku' => '$shared.sku$', 'source_code' => 'default', 'quantity' => 100, 'status' => 1]),
+        DataFixture(GuestCartFixture::class, as: 'cart'),
+        DataFixture(AddProductToCartFixture::class, ['cart_id' => '$cart.id$', 'product_id' => '$aggregate.id$', 'qty' => 1]),
+        DataFixture(AddProductToCartFixture::class, ['cart_id' => '$cart.id$', 'product_id' => '$shared.id$', 'qty' => 1]),
+        DataFixture(SetBillingAddressFixture::class, ['cart_id' => '$cart.id$']),
+        DataFixture(SetShippingAddressFixture::class, ['cart_id' => '$cart.id$']),
+        DataFixture(SetGuestEmailFixture::class, ['cart_id' => '$cart.id$']),
+        DataFixture(SetDeliveryMethodFixture::class, ['cart_id' => '$cart.id$', 'carrier_code' => 'flatrate', 'method_code' => 'flatrate']),
+        DataFixture(SetPaymentMethodFixture::class, ['cart_id' => '$cart.id$', 'method' => 'checkmo']),
+        DataFixture(PlaceOrderFixture::class, ['cart_id' => '$cart.id$'], as: 'order'),
+    ]
+    public function testSharedChildSkuFullyShippedRefundBalances(): void
+    {
+        $order = $this->invoiceAndShip($this->fixtures->get('order'));
+        $parentItem = $this->getAggregateParentItem($order);
+        $standaloneItem = $this->getStandaloneItem($order, 'agg-full-shared');
+
+        $this->assertEquals(97.0, $this->getDefaultSourceQty('agg-full-shared'), 'all 3 units ship');
+
+        $creditmemo = $this->creditmemoFactory->createByOrder($order, [
+            'qtys' => [
+                (int) $parentItem->getItemId() => 1,
+                (int) $standaloneItem->getItemId() => 1,
+            ],
+        ]);
+        $this->setBackToStockLikeAdmin($creditmemo, [
+            (int) $parentItem->getItemId(),
+            (int) $standaloneItem->getItemId(),
+        ]);
+
+        $this->objectManager->get(CreditmemoManagementInterface::class)->refund($creditmemo, true);
+
+        $this->assertEquals(
+            100.0,
+            $this->getDefaultSourceQty('agg-full-shared'),
+            'all 3 shipped units come back exactly once'
+        );
+    }
+
+    private function getStandaloneItem(OrderInterface $order, string $sku): ?OrderItem
+    {
+        foreach ($order->getAllItems() as $item) {
+            if ($item->getSku() === $sku && !$item->getParentItemId()) {
+                return $item;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * @return ShipmentItemCreationInterface[]
+     */
+    private function createShippableItemsExcluding(OrderInterface $order, int $excludedOrderItemId): array
+    {
+        return array_values(array_filter(
+            $this->createShippableItemsFromOrder($order),
+            static fn (ShipmentItemCreationInterface $item) => $item->getOrderItemId() !== $excludedOrderItemId
+        ));
+    }
+
+    /**
+     * Mirror the admin credit-memo screen: the operator ticks return-to-stock on the visible rows,
+     * and the loader cascades the parent tick onto its hidden children.
+     *
+     * @param int[] $tickedOrderItemIds
+     */
+    private function setBackToStockLikeAdmin(Creditmemo $creditmemo, array $tickedOrderItemIds): void
+    {
+        foreach ($creditmemo->getAllItems() as $creditmemoItem) {
+            $orderItem = $creditmemoItem->getOrderItem();
+            if ($orderItem === null) {
+                continue;
+            }
+            $parentId = (int) $orderItem->getParentItemId();
+            $creditmemoItem->setBackToStock(
+                in_array((int) $orderItem->getId(), $tickedOrderItemIds, true)
+                || ($parentId > 0 && in_array($parentId, $tickedOrderItemIds, true))
+            );
+        }
+    }
+
     private function invoiceAndShip(OrderInterface $order): Order
     {
         $orderId = (int) $order->getEntityId();
