@@ -18,9 +18,13 @@
     "magento/module-sales-inventory": "100.4.*",
     "nfourteen/module-aggregate-product": "*"
   },
-  "license": [
-    "Proprietary"
+  "authors": [
+    {
+      "name": "David Nimorwicz",
+      "email": "dave@nfourteen.com"
+    }
   ],
+  "license": "OSL-3.0",
   "autoload": {
     "files": [
       "registration.php"

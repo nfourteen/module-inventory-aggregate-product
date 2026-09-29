@@ -1,9 +1,9 @@
 <?php
 declare(strict_types=1);
 /**
- * Copyright © Nfourteen. All Rights Reserved.
- * See COPYING.txt for license details.
- **/
+ * Copyright © David Nimorwicz. All rights reserved.
+ * See LICENSE.txt for license details.
+ */
 
 namespace Nfourteen\InventoryAggregateProduct\Plugin\InventorySales;
 
@@ -19,15 +19,18 @@ use Nfourteen\InventoryAggregateProduct\Service\AggregateQtyResolver;
 /**
  * Restore inventory for aggregate children on credit-memo return-to-stock.
  *
- * Core's ProcessReturnQtyOnCreditMemoPlugin is an around plugin that never calls $proceed, so an
- * afterExecute would be stranded behind it — this plugin must wrap it as the outermost around
- * (lower sortOrder in di.xml). Core skips the aggregate parent (no source items) and the hidden
- * child order items carry an unscaled credit-memo qty (createByOrder gives each dummy child qty
- * 1), so inventory drifts on every return; the admin return-to-stock cascade also copies the
- * parent flag onto the children, which would double-restore them.
+ * Core skips the aggregate parent (no source items) and the hidden child order items carry an
+ * unscaled credit-memo qty (createByOrder gives each dummy child qty 1), so inventory drifts on
+ * every return; the admin return-to-stock cascade in CreditmemoLoader also copies the parent flag
+ * onto the children, which would double-restore them.
  *
- * Strip aggregate child ids from the list core sees, let core handle ordinary items, then expand
- * each returned aggregate parent into child SKUs scaled by the ordered-qty ratio.
+ * So beforeExecute() hides the children from core, and afterExecute() restores them at the scaled
+ * qty once core has finished with the ordinary items.
+ *
+ * On the sortOrder="-1" in di.xml: core's ProcessReturnQtyOnCreditMemoPlugin is an aroundExecute
+ * that never calls $proceed, so ReturnProcessor::execute never runs and neither does any plugin
+ * ordered after core. A sortOrder below core's default 0 puts these listeners outside core's
+ * around in the interceptor chain, which is what lets afterExecute() run at all.
  */
 class ProcessRefundItemsForAggregatePlugin
 {
@@ -40,8 +43,48 @@ class ProcessRefundItemsForAggregatePlugin
     }
 
     /**
+     * Hide aggregate children from core so it cannot restore them at the unscaled qty.
+     *
+     * afterExecute() owns their restoration. Core still handles the parent (skipped as a disabled
+     * type) and every ordinary item exactly as before. The parents stay in the list, which is what
+     * keeps the children matched downstream: GetInvoicedItemsPerSourceByPriority::isValidItem()
+     * accepts an item whose PARENT id is in $returnToStockItems, so removing the child ids costs
+     * nothing there.
+     *
      * @param ReturnProcessor $subject
-     * @param callable $proceed
+     * @param CreditmemoInterface $creditmemo
+     * @param OrderInterface $order
+     * @param array $returnToStockItems
+     * @param bool $isAutoReturn
+     * @return array
+     * @SuppressWarnings(PHPMD.UnusedFormalParameter)
+     */
+    public function beforeExecute(
+        ReturnProcessor $subject,
+        CreditmemoInterface $creditmemo,
+        OrderInterface $order,
+        array $returnToStockItems = [],
+        bool $isAutoReturn = false
+    ): array {
+        $aggregateChildItemIds = $this->collectAggregateChildItemIds($creditmemo);
+
+        $coreReturnToStockItems = array_values(array_filter(
+            $returnToStockItems,
+            static fn ($itemId) => !in_array((int) $itemId, $aggregateChildItemIds, true)
+        ));
+
+        return [$creditmemo, $order, $coreReturnToStockItems, $isAutoReturn];
+    }
+
+    /**
+     * Expand each returned aggregate parent into child SKUs scaled by the ordered-qty ratio.
+     *
+     * $returnToStockItems arrives as beforeExecute() returned it, children already stripped: the
+     * interceptor hands after-listeners the arguments as before-listeners left them. That is what
+     * we want here, because the only ids this method reads are the parents', which are untouched.
+     *
+     * @param ReturnProcessor $subject
+     * @param null $result
      * @param CreditmemoInterface $creditmemo
      * @param OrderInterface $order
      * @param array $returnToStockItems
@@ -49,26 +92,14 @@ class ProcessRefundItemsForAggregatePlugin
      * @return void
      * @SuppressWarnings(PHPMD.UnusedFormalParameter)
      */
-    public function aroundExecute(
+    public function afterExecute(
         ReturnProcessor $subject,
-        callable $proceed,
+        $result,
         CreditmemoInterface $creditmemo,
         OrderInterface $order,
         array $returnToStockItems = [],
         bool $isAutoReturn = false
     ): void {
-        $aggregateChildItemIds = $this->collectAggregateChildItemIds($creditmemo);
-
-        // Hide aggregate children from core so it cannot restore them at the unscaled qty; we own
-        // their restoration below. Core still handles the parent (skipped as a disabled type) and
-        // every ordinary item exactly as before.
-        $coreReturnToStockItems = array_values(array_filter(
-            $returnToStockItems,
-            static fn ($itemId) => !in_array((int) $itemId, $aggregateChildItemIds, true)
-        ));
-
-        $proceed($creditmemo, $order, $coreReturnToStockItems, $isAutoReturn);
-
         $items = [];
         foreach ($creditmemo->getItems() as $creditmemoItem) {
             $orderItem = $creditmemoItem->getOrderItem();
@@ -101,7 +132,7 @@ class ProcessRefundItemsForAggregatePlugin
             // INVARIANT: by the time this runs, getQtyRefunded() ALREADY includes the current
             // credit memo's qty (RefundOperation::register() increments it before the
             // sales_order_creditmemo_save_after observer fires ReturnProcessor). The
-            // "+ $childRefundQty" term added to $childProcessedQty below cancels that increment —
+            // "+ $childRefundQty" term added to $childProcessedQty below cancels that increment,
             // exactly as core does. Do not "simplify" away that term or the math silently breaks.
             $parentNetInvoiced = (float) $orderItem->getQtyInvoiced() - (float) $orderItem->getQtyRefunded();
 

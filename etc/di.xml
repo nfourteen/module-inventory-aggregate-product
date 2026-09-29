@@ -1,10 +1,4 @@
 <?xml version="1.0"?>
-<!--
-/**
- * Copyright © Nfourteen. All Rights Reserved.
- * See COPYING.txt for license details.
- */
--->
 <config xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="urn:magento:framework:ObjectManager/etc/config.xsd">
     <!-- Register stock status processor for aggregate products -->
     <type name="Magento\InventoryCatalogApi\Model\CompositeProductStockStatusProcessorPool">
@@ -46,12 +40,15 @@
     <!--
         Credit-memo return-to-stock: core's MSI plugin ignores aggregate parents (source item
         management is disabled for the type) and the children are hidden order items, so nothing
-        is restored. Core's own plugin is an aroundExecute that fully replaces the method and never
-        calls $proceed, so a plain afterExecute here would be stranded behind it. We therefore wrap
-        core as the OUTERMOST around plugin (sortOrder lower than core's default 0): we strip the
-        hidden aggregate children from the list core sees, call $proceed to let core handle ordinary
-        items, then expand each returned parent into its child SKUs through the same ProcessRefundItems
-        path core uses.
+        is restored. The plugin is a before/after pair: beforeExecute strips the hidden aggregate
+        children from the list core sees, afterExecute expands each returned parent into its child
+        SKUs through the same ProcessRefundItems path core uses.
+
+        sortOrder="-1" is required. Core's own plugin is an aroundExecute that fully replaces the
+        method and never calls $proceed, so ReturnProcessor::execute never runs and neither does
+        any plugin ordered after core. A sortOrder below core's default 0 places these listeners
+        outside core's around in the interceptor chain, so beforeExecute runs before core and
+        afterExecute runs once core's around returns.
     -->
     <type name="Magento\SalesInventory\Model\Order\ReturnProcessor">
         <plugin name="aggregate_refund_return_to_stock" sortOrder="-1"

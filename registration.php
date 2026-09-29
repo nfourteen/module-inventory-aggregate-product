@@ -2,9 +2,9 @@
 declare(strict_types=1);
 
 /**
- * Copyright © Nfourteen. All Rights Reserved.
- * See COPYING.txt for license details.
- **/
+ * Copyright © David Nimorwicz. All rights reserved.
+ * See LICENSE.txt for license details.
+ */
 
 use Magento\Framework\Component\ComponentRegistrar;
 
