@@ -15,6 +15,7 @@ use Magento\InventoryConfigurationApi\Api\Data\StockItemConfigurationInterface;
 use Magento\InventoryConfigurationApi\Api\GetStockItemConfigurationInterface;
 use Magento\InventorySalesApi\Api\AreProductsSalableInterface;
 use Magento\InventorySalesApi\Api\GetProductSalableQtyInterface;
+use Nfourteen\AggregateProduct\Model\Product\AllowedChildTypes;
 use Nfourteen\AggregateProduct\Model\Product\Child\ChildStatusResolver;
 use Nfourteen\AggregateProduct\Model\Product\Type\Aggregate;
 use Nfourteen\AggregateProduct\Model\ResourceModel\RelationMetadata;
@@ -29,7 +30,8 @@ class IsAggregateProductChildrenSalable
         private readonly GetProductTypesBySkusInterface $getProductTypesBySkus,
         private readonly GetProductSalableQtyInterface $getProductSalableQty,
         private readonly GetStockItemConfigurationInterface $getStockItemConfiguration,
-        private readonly ChildStatusResolver $childStatusResolver
+        private readonly ChildStatusResolver $childStatusResolver,
+        private readonly AllowedChildTypes $allowedChildTypes
     ) {
     }
 
@@ -66,6 +68,16 @@ class IsAggregateProductChildrenSalable
             // Any child that is not enabled makes the aggregate unsalable.
             if (!$this->childStatusResolver->allEnabled($childrenIds)) {
                 return false;
+            }
+
+            // Child types are only validated when the link is saved. A child that has since become
+            // another type (a configurable, say) cannot be added as part of the pack, and MSI keeps
+            // no salable qty for it, so it makes the aggregate unsalable.
+            $allowedTypes = $this->allowedChildTypes->get();
+            foreach ($this->getProductTypesBySkus->execute(array_values($childrenSkus)) as $childType) {
+                if (!in_array($childType, $allowedTypes, true)) {
+                    return false;
+                }
             }
 
             $salabilityResults = $this->areProductsSalable->execute($childrenSkus, $stockId);
