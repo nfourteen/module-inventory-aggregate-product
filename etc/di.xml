@@ -38,6 +38,19 @@
     </type>
 
     <!--
+        Credit-memo return-to-stock for virtual children: core's invoiced-items selector skips
+        dummy order items, so add one that reports the aggregate's virtual children as taken off
+        their source on invoice. ProcessRefundItems then returns them to that source.
+    -->
+    <type name="Magento\InventorySalesApi\Model\ReturnProcessor\GetSourceDeductedOrderItemsChain">
+        <arguments>
+            <argument name="sourceDeductedItemsSelector" xsi:type="array">
+                <item name="source_deducted_aggregate_virtual_children" xsi:type="object">Nfourteen\InventoryAggregateProduct\Service\ReturnProcessor\GetInvoicedVirtualChildrenPerSource</item>
+            </argument>
+        </arguments>
+    </type>
+
+    <!--
         Credit-memo return-to-stock: core's MSI plugin ignores aggregate parents (source item
         management is disabled for the type) and the children are hidden order items, so nothing
         is restored. The plugin is a before/after pair: beforeExecute strips the hidden aggregate

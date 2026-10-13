@@ -1,0 +1,10 @@
+{
+  "name": "nfourteen-inventory-aggregate-product-end-2-end",
+  "private": true,
+  "description": "End-to-end tests for Nfourteen_InventoryAggregateProduct, the MSI support of the aggregate product type.",
+  "license": "Proprietary",
+  "devDependencies": {
+    "@playwright/test": "^1.49.0",
+    "@types/node": "^22.10.1"
+  }
+}

@@ -1,0 +1,128 @@
+name: End-2-end
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+jobs:
+  # PHP 8.4 deprecated implicit nullable parameters, and setup:upgrade runs before the switch to
+  # production mode, so on 8.4 and later the install itself fails on the core module's
+  # constructors. Every job runs PHP 8.3 until those use explicit nullable types.
+  e2e-tests:
+    name: E2E (${{ matrix.PLATFORM }}, ${{ matrix.PHP_VERSION }}, ${{ matrix.MAGENTO_MODE }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - PLATFORM: magento2.4.9
+            IMAGE: magento-project-community-edition
+            PHP_VERSION: php83-fpm
+            MAGENTO_MODE: production
+          - PLATFORM: mage-os3.4.0
+            IMAGE: mage-os-community-edition
+            PHP_VERSION: php83-fpm
+            MAGENTO_MODE: developer
+          - PLATFORM: mage-os3.4.0
+            IMAGE: mage-os-community-edition
+            PHP_VERSION: php83-fpm
+            MAGENTO_MODE: production
+    env:
+      ADMIN_USER: e2e_admin
+      ADMIN_PASSWORD: E2eAdminPassword1
+      ADMIN_PATH: admin
+      # The store runs in a container driven from outside, so the fixtures reach Magento through
+      # docker exec instead of a local `php`.
+      E2E_MAGENTO_EXEC: docker exec store
+      E2E_MAGENTO_ROOT: /data
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/checkout@v7
+        with:
+          repository: nfourteen/module-aggregate-product
+          path: core-module
+
+      - name: Start the store container
+        run: |
+          mkdir -p magento-logs
+          docker run -d --name store \
+            -p 80:80 \
+            -v "$(pwd)/magento-logs:/data/var/log" \
+            ghcr.io/controlaltdelete-nl/magento2-in-a-box/${{ matrix.IMAGE }}:${{ matrix.PHP_VERSION }}-${{ matrix.PLATFORM }}
+
+      - name: Upload the modules into the container
+        run: |
+          sed -i '/version/d' ./core-module/composer.json
+          docker cp ./core-module store:/data/extensions/module-aggregate-product
+          rm -rf ./core-module
+          sed -i '/version/d' ./composer.json
+          docker cp $(pwd) store:/data/extensions/
+          docker exec store ./install-composer-package \
+            nfourteen/module-aggregate-product:@dev \
+            nfourteen/module-inventory-aggregate-product:@dev
+
+      - name: Enable the modules
+        run: |
+          docker exec store ./retry "php bin/magento module:enable Nfourteen_AggregateProduct Nfourteen_InventoryAggregateProduct"
+          docker exec store ./retry "php bin/magento setup:upgrade --no-interaction --keep-generated"
+
+      - name: Prepare Magento
+        run: |
+          docker exec store /bin/bash ./change-base-url http://localhost/
+          docker exec store ./retry "bin/magento config:set admin/security/session_lifetime 14400"
+          docker exec store ./retry "bin/magento config:set admin/security/admin_account_sharing 1"
+          docker exec store ./retry "bin/magento config:set admin/usage/enabled 0"
+          docker exec store ./retry "bin/magento indexer:set-mode schedule"
+          docker exec store ./retry "bin/magento admin:user:create \
+            --admin-user=${{ env.ADMIN_USER }} \
+            --admin-password=${{ env.ADMIN_PASSWORD }} \
+            --admin-email=e2e@example.com \
+            --admin-firstname=E2E \
+            --admin-lastname=Admin"
+          docker exec store ./retry "php bin/magento setup:di:compile"
+          docker exec store ./retry "php bin/magento setup:static-content:deploy -f"
+          docker exec store ./retry "php bin/magento deploy:mode:set ${{ matrix.MAGENTO_MODE }} --skip-compilation"
+          docker exec store ./retry "bin/magento cache:flush"
+
+      - name: Check that the admin is reachable
+        run: |
+          for attempt in $(seq 1 20); do
+            if curl --fail-with-body --location --max-redirs 5 -s -o /dev/null \
+              -w "admin: %{http_code} after %{num_redirects} redirect(s)\n" \
+              http://localhost/admin/; then
+              exit 0
+            fi
+            echo "not up yet (attempt $attempt), waiting"
+            sleep 5
+          done
+          echo "The admin never became reachable."
+          docker logs store | tail -50
+          exit 1
+
+      - name: Install Playwright
+        run: |
+          cd tests/End-2-End
+          npm install
+          npx playwright install --with-deps chromium
+
+      - name: Run the end-to-end tests
+        run: |
+          cd tests/End-2-End
+          BASE_URL="http://localhost/" npx playwright test
+
+      - name: Collect Magento logs
+        if: always()
+        run: docker logs store > magento.log 2>&1
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: e2e-${{ matrix.PLATFORM }}-${{ matrix.PHP_VERSION }}-${{ matrix.MAGENTO_MODE }}
+          path: |
+            tests/End-2-End/test-results
+            tests/End-2-End/playwright-report
+            magento-logs
+            magento.log
