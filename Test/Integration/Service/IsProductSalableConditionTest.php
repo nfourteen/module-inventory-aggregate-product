@@ -25,6 +25,7 @@ use Magento\InventoryApi\Test\Fixture\Source as SourceFixture;
 use Magento\InventoryApi\Test\Fixture\SourceItem as SourceItemFixture;
 use Magento\InventoryApi\Test\Fixture\Stock as StockFixture;
 use Magento\InventoryApi\Test\Fixture\StockSourceLinks as StockSourceLinksFixture;
+use Magento\InventoryCatalog\Model\IsSingleSourceModeCache;
 use Magento\InventoryCatalogApi\Api\DefaultSourceProviderInterface;
 use Magento\InventoryIndexer\Indexer\InventoryIndexer;
 use Magento\InventorySalesApi\Api\IsProductSalableInterface;
@@ -60,6 +61,11 @@ class IsProductSalableConditionTest extends TestCase
         $objectManager = Bootstrap::getObjectManager();
         $this->isProductSalable = $objectManager->get(IsProductSalableInterface::class);
         $this->fixtures = DataFixtureStorageManager::getStorage();
+    }
+
+    protected function tearDown(): void
+    {
+        $this->forgetCachedSourceMode();
     }
 
     #[
@@ -183,6 +189,7 @@ class IsProductSalableConditionTest extends TestCase
         $euStockId = (int) $this->fixtures->get('eu_stock')->getStockId();
         $usStockId = (int) $this->fixtures->get('us_stock')->getStockId();
         $globalStockId = (int) $this->fixtures->get('global_stock')->getStockId();
+        $this->forgetCachedSourceMode();
 
         $this->unassignFromDefaultSource(['child_eu_only', 'child_us_only']);
 
@@ -377,6 +384,17 @@ class IsProductSalableConditionTest extends TestCase
         $sourceItem->setStatus(SourceItemInterface::STATUS_IN_STOCK);
 
         $save->execute([$sourceItem]);
+    }
+
+    /**
+     * MSI caches whether the store runs in single-source mode for the rest of the process. Without a
+     * reset, a test that ran before extra sources existed leaves "single source" cached and MSI
+     * applies single-source behaviour (parent stock flips on child saves) to a multi-source setup,
+     * and a multi-source test leaves "multi source" cached for the single-source tests after it.
+     */
+    private function forgetCachedSourceMode(): void
+    {
+        Bootstrap::getObjectManager()->get(IsSingleSourceModeCache::class)->_resetState();
     }
 
     private function reindexInventory(): void
