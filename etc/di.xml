@@ -55,4 +55,27 @@
                 type="Nfourteen\InventoryAggregateProduct\Plugin\InventorySales\ProcessRefundItemsForAggregatePlugin"/>
     </type>
 
+    <!--
+        Stock index of non-default stocks: aggregates have no source items, so MSI derives their row
+        from the indexed children, like it does for bundles, configurables and grouped products.
+    -->
+    <type name="Magento\InventoryIndexer\Indexer\Stock\DataProvider">
+        <arguments>
+            <argument name="siblingSelectBuilders" xsi:type="array">
+                <item name="aggregate" xsi:type="object">Nfourteen\InventoryAggregateProduct\Indexer\SelectBuilder</item>
+            </argument>
+        </arguments>
+    </type>
+    <type name="Magento\InventoryIndexer\Indexer\SiblingProductsProvidersPool">
+        <arguments>
+            <argument name="siblingProductsProviders" xsi:type="array">
+                <item name="aggregate" xsi:type="object">Nfourteen\InventoryAggregateProduct\Indexer\SiblingProductsProvider</item>
+            </argument>
+        </arguments>
+    </type>
+    <type name="Nfourteen\AggregateProduct\Model\RelationReindexer">
+        <plugin name="aggregate_reindex_stocks_after_relation_change"
+                type="Nfourteen\InventoryAggregateProduct\Plugin\AggregateProduct\ReindexStocksAfterRelationChangePlugin"/>
+    </type>
+
 </config>
