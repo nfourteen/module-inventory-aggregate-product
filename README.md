@@ -2,6 +2,9 @@
 
 Magento Inventory (MSI) integration for the `aggregate` product type from [`Nfourteen_AggregateProduct`](https://github.com/nfourteen/module-aggregate-product).
 
+> [!WARNING]
+> **Beta - not for production use.** This module is part of the Aggregate Product suite, which is in beta. It has no tagged releases yet, known bugs are still being fixed, and behavior, configuration and stored data may change between commits without an upgrade path. Use it in development or staging environments only.
+
 An aggregate holds no stock of its own - salability and inventory movements derive from its children. This module teaches MSI that rule so aggregate parents behave correctly wherever stock is read or changed. **It depends on MSI and does nothing without it**; on an installation running legacy `Magento_CatalogInventory` stock only, don't install it.
 
 ## What it does
